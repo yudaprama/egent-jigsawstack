@@ -5,8 +5,8 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
-	"github.com/egentcloud/egent-jigsawstack"
-	"github.com/egentcloud/egent-jigsawstack/internal/test"
+	"github.com/yudaprama/egent-jigsawstack"
+	"github.com/yudaprama/egent-jigsawstack/internal/test"
 )
 
 func TestJigsawStack_Sentiment(t *testing.T) {

@@ -2,6 +2,8 @@ package jigsawstack
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"net/http"
 )
 
@@ -115,6 +117,13 @@ type (
 // VCOROption is the option for VOCR.
 type VCOROption func(*visionRequest)
 
+// NewVisionRequest builds a vision request for an image URL. Used by callers
+// that need to pass an image to VOCR or object detection without leaking the
+// internal request struct.
+func NewVisionRequest(imageURL string) visionRequest {
+	return visionRequest{URL: imageURL}
+}
+
 // WithKey sets the key of the file to use as the image.
 func WithKey(key string) VCOROption {
 	return func(params *visionRequest) { params.Key = key }
@@ -154,7 +163,7 @@ func (j *JigsawStack) VOCR(
 	if err != nil {
 		return "", err
 	}
-	return "", nil
+	return marshalStringResponse(resp)
 }
 
 // VisionObjectDetection performs a visual object detection (VOD) task on an
@@ -182,7 +191,7 @@ func (j *JigsawStack) VisionObjectDetection(
 	if err != nil {
 		return "", err
 	}
-	return "", nil
+	return marshalStringResponse(resp)
 }
 
 // ImageGeneration generates an image from a prompt and parameters.
@@ -206,4 +215,12 @@ func (j *JigsawStack) ImageGeneration(
 		return
 	}
 	return resp, nil
+}
+
+func marshalStringResponse(v any) (string, error) {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return "", fmt.Errorf("marshal response: %w", err)
+	}
+	return string(b), nil
 }
