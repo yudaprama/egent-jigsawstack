@@ -60,6 +60,9 @@ type ChatCompletionChunkChoice struct {
 	FinishReason *string               `json:"finish_reason"`
 }
 
+// version is injected at build time via -ldflags "-X main.version=<tag>".
+var version = "dev"
+
 var runner *adk.Runner
 
 func main() {
@@ -69,7 +72,13 @@ func main() {
 	godotenv.Load()
 
 	port := flag.String("port", "10513", "HTTP server port")
+	showVersion := flag.Bool("version", false, "Print version and exit")
 	flag.Parse()
+
+	if *showVersion {
+		fmt.Println(version)
+		return
+	}
 
 	ctx := context.Background()
 	ag, err := agent.NewAgent(ctx, "", "", "", "")
@@ -82,7 +91,7 @@ func main() {
 	http.HandleFunc("/health", healthHandler)
 
 	addr := "0.0.0.0:" + *port
-	log.Printf("JigsawStack Eino Agent server starting on %s", addr)
+	log.Printf("JigsawStack Eino Agent server %s starting on %s", version, addr)
 	if err := http.ListenAndServe(addr, nil); err != nil {
 		log.Fatalf("server error: %v", err)
 	}

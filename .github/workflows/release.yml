@@ -1,0 +1,170 @@
+name: Build & Release
+
+on:
+  push:
+    branches: [master]
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build all targets
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.ver.outputs.version }}
+      mode: ${{ steps.ver.outputs.mode }}
+      skip: ${{ steps.ver.outputs.skip }}
+      is_prerelease: ${{ steps.ver.outputs.is_prerelease }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+          cache: true
+
+      - name: Determine version
+        id: ver
+        env:
+          GITHUB_REF_TYPE: ${{ github.ref_type }}
+          GITHUB_REF: ${{ github.ref }}
+        run: |
+          set -euo pipefail
+
+          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
+            # Tag-triggered run: this version is final.
+            VERSION="${GITHUB_REF#refs/tags/}"
+            MODE="tag"
+          else
+            # Branch-triggered run: compute next patch version from latest v* tag.
+            latest=$(git tag --list 'v*' --sort=-v:refname | head -1 || true)
+            if [[ -z "${latest}" ]]; then
+              latest="v0.0.0"
+            fi
+            ver=${latest#v}
+            major=$(echo "${ver}" | cut -d. -f1)
+            minor=$(echo "${ver}" | cut -d. -f2)
+            patch=$(echo "${ver}" | cut -d. -f3)
+            patch=$((patch + 1))
+            VERSION="v${major}.${minor}.${patch}"
+            MODE="branch"
+
+            # Skip if HEAD is already at the latest tag (idempotent reruns).
+            head_sha=$(git rev-parse HEAD)
+            tag_sha=$(git rev-parse "${latest}^{commit}" 2>/dev/null || echo "")
+            if [[ "${head_sha}" == "${tag_sha}" ]]; then
+              echo "::notice::HEAD already tagged as ${latest}; nothing to release."
+              echo "skip=true" >> "${GITHUB_OUTPUT}"
+            else
+              echo "skip=false" >> "${GITHUB_OUTPUT}"
+            fi
+          fi
+
+          if [[ "${VERSION}" == *-* ]]; then
+            IS_PRERELEASE=true
+          else
+            IS_PRERELEASE=false
+          fi
+
+          echo "version=${VERSION}" >> "${GITHUB_OUTPUT}"
+          echo "mode=${MODE}" >> "${GITHUB_OUTPUT}"
+          echo "is_prerelease=${IS_PRERELEASE}" >> "${GITHUB_OUTPUT}"
+          echo "Version: ${VERSION} (mode=${MODE}, prerelease=${IS_PRERELEASE})"
+
+      - name: Run tests
+        run: make test
+
+      - name: Build all targets
+        env:
+          VERSION: ${{ steps.ver.outputs.version }}
+        run: make build-all VERSION="$VERSION"
+
+      - name: Pack source archive
+        env:
+          VERSION: ${{ steps.ver.outputs.version }}
+        run: |
+          mkdir -p dist
+          git archive --format=tar.gz \
+            --prefix="egent-jigsawstack-${VERSION}/" \
+            -o "dist/egent-jigsawstack-source-${VERSION}.tar.gz" \
+            HEAD
+          sha256sum "dist/egent-jigsawstack-source-${VERSION}.tar.gz" \
+            > "dist/egent-jigsawstack-source-${VERSION}.tar.gz.sha256"
+          ls -lh dist/
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: egent-jigsawstack-binaries
+          path: |
+            dist/*.tar.gz
+            dist/*.sha256
+          retention-days: 30
+
+  release:
+    name: Publish release
+    needs: build
+    # Branch pushes with a freshly computed version; tag pushes always publish.
+    if: >
+      github.event_name == 'workflow_dispatch' ||
+      needs.build.outputs.mode == 'tag' ||
+      (needs.build.outputs.mode == 'branch' && needs.build.outputs.skip != 'true')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Re-derive version
+        id: ver
+        env:
+          GITHUB_REF_TYPE: ${{ github.ref_type }}
+          GITHUB_REF: ${{ github.ref }}
+        run: |
+          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
+            VERSION="${GITHUB_REF#refs/tags/}"
+          else
+            latest=$(git tag --list 'v*' --sort=-v:refname | head -1 || true)
+            if [[ -z "${latest}" ]]; then
+              latest="v0.0.0"
+            fi
+            ver=${latest#v}
+            major=$(echo "${ver}" | cut -d. -f1)
+            minor=$(echo "${ver}" | cut -d. -f2)
+            patch=$(echo "${ver}" | cut -d. -f3)
+            patch=$((patch + 1))
+            VERSION="v${major}.${minor}.${patch}"
+          fi
+
+          if [[ "${VERSION}" == *-* ]]; then
+            IS_PRERELEASE=true
+          else
+            IS_PRERELEASE=false
+          fi
+
+          echo "version=${VERSION}" >> "${GITHUB_OUTPUT}"
+          echo "is_prerelease=${IS_PRERELEASE}" >> "${GITHUB_OUTPUT}"
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: List artifacts
+        run: ls -la dist/
+
+      - name: Create or update release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.ver.outputs.version }}
+          name: Release ${{ steps.ver.outputs.version }}
+          generate_release_notes: true
+          prerelease: ${{ steps.ver.outputs.is_prerelease == 'true' }}
+          files: |
+            dist/*.tar.gz
+            dist/*.sha256
