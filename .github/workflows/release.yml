@@ -97,12 +97,13 @@ jobs:
             > "dist/egent-jigsawstack-source-${VERSION}.tar.gz.sha256"
           ls -lh dist/
 
+      # Raw binaries (dist/egent-jigsawstack-{os}-{arch}) + their .sha256, plus the
+      # source archive. planoctl downloads the raw binaries by exact name.
       - uses: actions/upload-artifact@v4
         with:
           name: egent-jigsawstack-binaries
           path: |
-            dist/*.tar.gz
-            dist/*.sha256
+            dist/egent-jigsawstack-*
           retention-days: 30
 
   release:
@@ -166,5 +167,4 @@ jobs:
           generate_release_notes: true
           prerelease: ${{ steps.ver.outputs.is_prerelease == 'true' }}
           files: |
-            dist/*.tar.gz
-            dist/*.sha256
+            dist/egent-jigsawstack-*

@@ -11,7 +11,11 @@ build: ## Build for current platform
 	@mkdir -p bin
 	$(GO) build -trimpath -ldflags "$(LDFLAGS)" -o bin/$(BINARY) $(CMD)
 
-build-all: ## Cross-compile for all targets
+# planoctl downloads RAW, uncompressed binaries named egent-jigsawstack-{os}-{arch}
+# (no tarball, no version prefix) — see ai-orchestration/main.go::ensureEgentJigsawstackBinary.
+# So build-all emits raw binaries, unlike egent-lobehub (tar.gz) which main.go
+# extracts. Keep this contract in sync with planoctl.
+build-all: ## Cross-compile RAW binaries for all targets (planoctl download contract)
 	@mkdir -p dist
 	@for target in $(TARGETS); do \
 	  os=$$(echo $$target | cut -d/ -f1); \
@@ -20,11 +24,8 @@ build-all: ## Cross-compile for all targets
 	  GOOS=$$os GOARCH=$$arch CGO_ENABLED=0 \
 	    $(GO) build -trimpath -ldflags "$(LDFLAGS)" \
 	      -o "dist/$(BINARY)-$$os-$$arch" $(CMD) || exit 1; \
-	  tar -czf "dist/$(BINARY)-$$os-$$arch.tar.gz" \
-	    -C dist "$(BINARY)-$$os-$$arch"; \
-	  rm "dist/$(BINARY)-$$os-$$arch"; \
-	  sha256sum "dist/$(BINARY)-$$os-$$arch.tar.gz" \
-	    > "dist/$(BINARY)-$$os-$$arch.tar.gz.sha256"; \
+	  sha256sum "dist/$(BINARY)-$$os-$$arch" \
+	    > "dist/$(BINARY)-$$os-$$arch.sha256"; \
 	done
 	@ls -lh dist/
 

@@ -24,3 +24,4 @@ go.work.sum
 *.swo
 .DS_Store
 bin/
+dist/
