@@ -4,8 +4,10 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -135,15 +137,12 @@ func chatCompletionsHandler(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, fmt.Sprintf("agent error: %v", event.Err), http.StatusInternalServerError)
 			return
 		}
-		if event.Output != nil && event.Output.MessageOutput != nil {
-			msg, err := event.Output.MessageOutput.GetMessage()
-			if err != nil {
-				continue
-			}
-			if msg.Role == schema.Assistant && msg.Content != "" {
-				finalContent.WriteString(msg.Content)
-			}
+		text, err := extractEventContent(event)
+		if err != nil {
+			http.Error(w, fmt.Sprintf("agent error: %v", err), http.StatusInternalServerError)
+			return
 		}
+		finalContent.WriteString(text)
 	}
 
 	resp := ChatCompletionResponse{
@@ -220,11 +219,8 @@ func streamChatCompletion(w http.ResponseWriter, r *http.Request, req ChatComple
 			break
 		}
 		if event.Output != nil && event.Output.MessageOutput != nil {
-			msg, err := event.Output.MessageOutput.GetMessage()
+			text, err := extractEventContent(event)
 			if err != nil {
-				continue
-			}
-			if msg.Role == schema.Assistant && msg.Content != "" {
 				chunk := ChatCompletionChunk{
 					ID:      requestID,
 					Object:  "chat.completion.chunk",
@@ -234,7 +230,26 @@ func streamChatCompletion(w http.ResponseWriter, r *http.Request, req ChatComple
 						Index: 0,
 						Delta: ChatCompletionMessage{
 							Role:    "assistant",
-							Content: msg.Content,
+							Content: fmt.Sprintf("\n[Error: %v]", err),
+						},
+					}},
+				}
+				writeSSE(writer, chunk)
+				writer.Flush()
+				flusher.Flush()
+				break
+			}
+			if text != "" {
+				chunk := ChatCompletionChunk{
+					ID:      requestID,
+					Object:  "chat.completion.chunk",
+					Created: time.Now().Unix(),
+					Model:   req.Model,
+					Choices: []ChatCompletionChunkChoice{{
+						Index: 0,
+						Delta: ChatCompletionMessage{
+							Role:    "assistant",
+							Content: text,
 						},
 					}},
 				}
@@ -269,4 +284,37 @@ func buildConversationQuery(messages []ChatCompletionMessage) string {
 
 func generateID() string {
 	return fmt.Sprintf("chatcmpl-%d", time.Now().UnixNano())
+}
+
+// extractEventContent extracts text content from an AgentEvent, handling both
+// streaming and non-streaming MessageOutput variants.
+func extractEventContent(event *adk.AgentEvent) (string, error) {
+	if event.Output == nil || event.Output.MessageOutput == nil {
+		return "", nil
+	}
+	mv := event.Output.MessageOutput
+	if mv.IsStreaming {
+		var sb strings.Builder
+		for {
+			chunk, err := mv.MessageStream.Recv()
+			if errors.Is(err, io.EOF) {
+				break
+			}
+			if err != nil {
+				return sb.String(), fmt.Errorf("recv stream: %w", err)
+			}
+			if chunk.Role == schema.Assistant && chunk.Content != "" {
+				sb.WriteString(chunk.Content)
+			}
+		}
+		return sb.String(), nil
+	}
+	msg, err := mv.GetMessage()
+	if err != nil {
+		return "", err
+	}
+	if msg.Role == schema.Assistant && msg.Content != "" {
+		return msg.Content, nil
+	}
+	return "", nil
 }

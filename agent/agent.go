@@ -118,7 +118,10 @@ func NewAgent(ctx context.Context, apiKey, baseURL, modelName, modelAPIKey strin
 
 // NewRunner wraps the agent in an Eino Runner.
 func NewRunner(ctx context.Context, agent adk.Agent) *adk.Runner {
-	return adk.NewRunner(ctx, adk.RunnerConfig{Agent: agent})
+	return adk.NewRunner(ctx, adk.RunnerConfig{
+		Agent:           agent,
+		EnableStreaming: true,
+	})
 }
 
 // BuildTools constructs the allowlisted JigsawStack Eino tools.
