@@ -31,7 +31,7 @@ type ChatCompletionRequest struct {
 
 type ChatCompletionMessage struct {
 	Role    string `json:"role"`
-	Content string `json:"content"`
+	Content any    `json:"content"` // string OR []OpenAI content parts
 }
 
 type ChatCompletionResponse struct {
@@ -303,17 +303,45 @@ func writeSSE(writer *bufio.Writer, chunk ChatCompletionChunk) {
 	fmt.Fprintf(writer, "data: %s\n\n", data)
 }
 
+// messageText extracts concatenated text from an OpenAI `content` field, which
+// may be a plain string ("hi") or an array of typed parts
+// ([{"type":"text","text":"hi"}, ...]) as emitted by multipart clients such as
+// the Vercel AI SDK's convertToModelMessages.
+func messageText(content any) string {
+	switch v := content.(type) {
+	case string:
+		return v
+	case []any:
+		var b strings.Builder
+		for _, part := range v {
+			switch p := part.(type) {
+			case string:
+				b.WriteString(p)
+			case map[string]any:
+				switch t, _ := p["type"].(string); t {
+				case "text", "input_text", "output_text":
+					if s, _ := p["text"].(string); s != "" {
+						b.WriteString(s)
+					}
+				}
+			}
+		}
+		return b.String()
+	}
+	return ""
+}
+
 func buildConversationQuery(messages []ChatCompletionMessage) string {
 	if len(messages) == 1 {
-		return messages[0].Content
+		return messageText(messages[0].Content)
 	}
 	var b strings.Builder
 	for _, m := range messages {
 		switch m.Role {
 		case "user":
-			fmt.Fprintf(&b, "User: %s\n", m.Content)
+			fmt.Fprintf(&b, "User: %s\n", messageText(m.Content))
 		case "assistant":
-			fmt.Fprintf(&b, "Assistant: %s\n", m.Content)
+			fmt.Fprintf(&b, "Assistant: %s\n", messageText(m.Content))
 		}
 	}
 	return b.String()
