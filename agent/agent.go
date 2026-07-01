@@ -79,10 +79,7 @@ func NewAgent(ctx context.Context, apiKey, baseURL, modelName, modelAPIKey strin
 		modelAPIKey = "EMPTY"
 	}
 	if modelName == "" {
-		modelName = os.Getenv("MODEL_NAME")
-		if modelName == "" {
-			modelName = "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free"
-		}
+		modelName = "kawai/kawai-pro-max"
 	}
 
 	chatModel, err := openai.NewChatModel(ctx, &openai.ChatModelConfig{

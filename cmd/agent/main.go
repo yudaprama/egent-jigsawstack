@@ -219,6 +219,43 @@ func streamChatCompletion(w http.ResponseWriter, r *http.Request, req ChatComple
 			break
 		}
 		if event.Output != nil && event.Output.MessageOutput != nil {
+			mv := event.Output.MessageOutput
+			// Forward the upstream token stream frame-by-frame so the client
+			// renders progressively. extractEventContent would drain the whole
+			// stream into a string first, making it arrive as a single burst.
+			if mv.IsStreaming && mv.MessageStream != nil {
+				for {
+					tok, err := mv.MessageStream.Recv()
+					if errors.Is(err, io.EOF) {
+						break
+					}
+					if err != nil {
+						log.Printf("stream recv error: %v", err)
+						break
+					}
+					if tok == nil || tok.Role != schema.Assistant || tok.Content == "" {
+						continue
+					}
+					chunk := ChatCompletionChunk{
+						ID:      requestID,
+						Object:  "chat.completion.chunk",
+						Created: time.Now().Unix(),
+						Model:   req.Model,
+						Choices: []ChatCompletionChunkChoice{{
+							Index: 0,
+							Delta: ChatCompletionMessage{
+								Role:    "assistant",
+								Content: tok.Content,
+							},
+						}},
+					}
+					writeSSE(writer, chunk)
+					writer.Flush()
+					flusher.Flush()
+				}
+				mv.MessageStream.Close()
+				continue
+			}
 			text, err := extractEventContent(event)
 			if err != nil {
 				chunk := ChatCompletionChunk{
